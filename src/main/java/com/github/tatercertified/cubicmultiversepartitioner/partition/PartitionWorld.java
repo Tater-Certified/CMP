@@ -1,254 +1,134 @@
 package com.github.tatercertified.cubicmultiversepartitioner.partition;
 
-import com.github.tatercertified.cubicmultiversepartitioner.CMP;
+import com.github.tatercertified.cubicmultiversepartitioner.api.CMPAPI;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.RegistryKey;
+import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.NbtString;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
-import net.minecraft.world.GameRules;
-import net.minecraft.world.World;
-import net.minecraft.world.dimension.DimensionType;
-import net.minecraft.world.dimension.DimensionTypes;
-import net.minecraft.world.gen.FlatLevelGeneratorPreset;
-import net.minecraft.world.gen.FlatLevelGeneratorPresets;
+import net.minecraft.world.dimension.DimensionOptions;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
-import net.minecraft.world.gen.chunk.FlatChunkGenerator;
-import org.jetbrains.annotations.Nullable;
-import xyz.nucleoid.fantasy.Fantasy;
 import xyz.nucleoid.fantasy.RuntimeWorldConfig;
 import xyz.nucleoid.fantasy.RuntimeWorldHandle;
 import xyz.nucleoid.fantasy.util.VoidChunkGenerator;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-public class PartitionWorld {
-    private final MinecraftServer server;
-    private final Fantasy fantasy;
-    private long id;
-    private String name;
-    private long seed;
-    private int size;
-    private int[] dimensions;
-    private String generator;
-    private final List<RuntimeWorldHandle> worldHandles = new ArrayList<>();
-    private boolean hasNether;
-    private boolean hasEnd;
+/**
+ * This is the main class for creating dimensions and storing information about those dimensions
+ * @param identifier The Identifier for the PartitionWorld
+ * @param seed The seed for each dimension
+ * @param worldBorderSize Limits the radius to this amount
+ * @param dimensions Vanilla (or modded) dimension Identifiers that your dimensions will inherit
+ * @param tickSeparately Whether to tick independent of the main 3 dimensions of the server (this will cause time syncing issues, but will allow these dimensions to lag without affecting the rest of the server)
+ * @param server MinecraftServer instance
+ */
+public record PartitionWorld(Identifier identifier, long seed, int worldBorderSize, Identifier[] dimensions, boolean tickSeparately, MinecraftServer server) {
 
-    public PartitionWorld(MinecraftServer server, Fantasy fantasy, NbtCompound nbt) {
-        this.server = server;
-        this.fantasy = fantasy;
-        unpackNbt(nbt);
-        setUpWorlds(this.generator);
-    }
+    private static final Map<Identifier, RuntimeWorldHandle> worlds = new HashMap<>();
+    private static ExecutorService tickThread;
 
-    /**
-     * Sets up the PartitionWorld for active usage
-     * @param nbt Nbt Data from the PersistentState
-     */
-    private void unpackNbt(NbtCompound nbt) {
-        this.id = nbt.getLong("id");
-        this.name = nbt.getString("name");
-        this.seed = nbt.getLong("seed");
-        this.size = nbt.getInt("size");
-        this.dimensions = nbt.getIntArray("dimensions");
-        this.generator = nbt.getString("generator");
-    }
-
-    /**
-     * Creates the physical world
-     */
-    private void setUpWorlds(@Nullable String generatorType) {
-        ChunkGenerator generator = null;
-        if (generatorType != null) {
-            switch (generatorType) {
-                case "superflat" -> {
-                    FlatLevelGeneratorPreset preset = server.getRegistryManager().get(RegistryKeys.FLAT_LEVEL_GENERATOR_PRESET).get(FlatLevelGeneratorPresets.CLASSIC_FLAT);
-                    generator = new FlatChunkGenerator(preset.settings());
-                }
-                case "minimalsuperflat" -> {
-
-                }
-                case "void" -> generator = new VoidChunkGenerator(server.getRegistryManager().get(RegistryKeys.BIOME).getEntry(0).get());
-            }
+    public PartitionWorld {
+        if (tickSeparately()) {
+            tickThread = Executors.newSingleThreadExecutor();
         }
+        setUpWorlds();
+    }
 
-        RegistryKey<DimensionType> type = null;
-        for (int i : dimensions) {
-            switch (i) {
-                case 1 -> {
-                    type = DimensionTypes.OVERWORLD;
-                    if (generator == null) {
-                        generator = server.getOverworld().getChunkManager().getChunkGenerator();
-                    }
-                }
-                case 2 -> {
-                    type = DimensionTypes.THE_NETHER;
-                    if (generator == null) {
-                        generator = Objects.requireNonNull(server.getWorld(World.NETHER)).getChunkManager().getChunkGenerator();
-                    }
-                    hasNether = true;
-                }
-                case 3 -> {
-                    type = DimensionTypes.THE_END;
-                    if (generator == null) {
-                        generator = Objects.requireNonNull(server.getWorld(World.END)).getChunkManager().getChunkGenerator();
-                    }
-                    hasEnd = true;
-                }
+    private void setUpWorlds() {
+        for (Identifier id : dimensions()) {
+            DimensionOptions options = server.getRegistryManager().get(RegistryKeys.DIMENSION).get(id);
+            ChunkGenerator generator;
+            if (options != null) {
+                generator = options.chunkGenerator();
+            } else {
+                options = server.getRegistryManager().get(RegistryKeys.DIMENSION).get(DimensionOptions.OVERWORLD);
+                generator = new VoidChunkGenerator(server.getRegistryManager().get(RegistryKeys.BIOME));
             }
 
             RuntimeWorldConfig config = new RuntimeWorldConfig()
                     .setSeed(this.seed)
                     .setShouldTickTime(true)
-                    .setDimensionType(type)
+                    .setDimensionType(options.dimensionTypeEntry())
                     .setGenerator(generator);
 
-            Identifier identifier;
-            if (i == 0) {
-                identifier = new Identifier(CMP.MODID, Long.toString(id));
-            } else {
-                identifier = new Identifier(CMP.MODID, id + "_" + i);
-            }
-
-            RuntimeWorldHandle handle = fantasy.getOrOpenPersistentWorld(identifier, config);
-            worldHandles.add(i, handle);
+            RuntimeWorldHandle handle = PartitionManager.fantasy.getOrOpenPersistentWorld(identifier(), config);
+            worlds.put(id, handle);
 
             handle.setTickWhenEmpty(false);
 
             handle.asWorld().getWorldBorder().setCenter(0.5, 0.5);
-            handle.asWorld().getWorldBorder().setSize(this.size);
+            handle.asWorld().getWorldBorder().setSize(worldBorderSize());
+
+            ((ServerWorldPartitionInterface)handle.asWorld()).setParentIdentifier(identifier());
         }
     }
 
     /**
-     * Saves all data to a NbtCompound
-     * @return Saved data as NbtCompound
+     * Searches the PartitionWorld for a specific dimension
+     * @param identifier Identifier for the dimension
+     * @return ServerWorld of the dimension
      */
-    public NbtCompound packNbt() {
-        NbtCompound compound = new NbtCompound();
-        compound.putLong("id", this.id);
-        compound.putString("name", this.name);
-        compound.putLong("seed", this.seed);
-        compound.putInt("size", this.size);
-        compound.putIntArray("dimensions", this.dimensions);
-        compound.putString("generator", this.generator);
+    public ServerWorld getWorld(Identifier identifier) {
+        return worlds.get(identifier).asWorld();
+    }
 
+    /**
+     * Removes all dimensions in this PartitionWorld without saving
+     */
+    public void discardDimensions() {
+        worlds.forEach((s, runtimeWorldHandle) -> runtimeWorldHandle.delete());
+        CMPAPI.WorldRemovedEvent.WORLD_REMOVED_EVENT.invoker().runWorldRemovedEvent(this);
+    }
+
+    /**
+     * Converts all the data into NBT
+     * @return PartitionWorld as NbtCompound
+     */
+    public NbtCompound pack() {
+        NbtCompound compound = new NbtCompound();
+        compound.putString("namespace", identifier().getNamespace());
+        compound.putString("path", identifier().getPath());
+        compound.putLong("seed", seed());
+        compound.putInt("worldBorderSize", worldBorderSize());
+        compound.putBoolean("tickSeparately", tickSeparately());
+        compound.put("dimensions", packWorlds());
+        CMPAPI.WorldSavedEvent.WORLD_SAVED_EVENT.invoker().runWorldSavedEvent(this);
         return compound;
     }
 
-
-
-    // Data related methods
-
-    /**
-     * Grabs the seed
-     * @return Seed
-     */
-    public long getSeed() {
-        return this.seed;
+    private NbtList packWorlds() {
+        NbtList worlds = new NbtList();
+        for (Identifier id : dimensions()) {
+            NbtList worldIdentifier = new NbtList();
+            worldIdentifier.add(0, NbtString.of(id.getNamespace()));
+            worldIdentifier.add(1, NbtString.of(id.getPath()));
+            worlds.add(worldIdentifier);
+        }
+        return worlds;
     }
 
     /**
-     * Grabs the ID of the Partition
-     * @return ID of PartitionWorld
+     * Ticks all the Dimensions.
+     * If "tickSeparately" is true, the Dimensions in this PartitionWorld are ticked on a separate thread
      */
-    public long getId() {
-        return this.id;
-    }
-
-    /**
-     * Grabs the Name of the Partition
-     * @return Name of PartitionWorld
-     */
-    public String getName() {
-        return this.name;
-    }
-
-    /**
-     * Grabs the PartitionWorld size
-     * @return Size of WorldBorder
-     */
-    public int getWorldSize() {
-        return this.size;
-    }
-
-    /**
-     * Gets the Dimension as a ServerWorld.
-     * Remember that 1 = Overworld, 2 = Nether, and 3 = End
-     * @param dimension Corresponding number that matches the Dimension
-     * @return ServerWorld of the Dimension. If it doesn't exist, returns null
-     */
-    @Nullable
-    public ServerWorld getDimension(int dimension) {
-        if (this.worldHandles.size() > dimension && this.worldHandles.get(dimension) != null) {
-            return this.worldHandles.get(dimension).asWorld();
+    public void tick() {
+        if (tickSeparately()) {
+            tickThread.execute(this::tickWorlds);
         } else {
-            return null;
+            tickWorlds();
         }
     }
 
-    /**
-     * If the Partition contains a Nether
-     * @return if it has a Nether
-     */
-    public boolean hasNether() {
-        return this.hasNether;
-    }
-
-    /**
-     * If the Partition contains an End
-     * @return if it has an End
-     */
-    public boolean hasEnd() {
-        return this.hasEnd;
-    }
-
-    /**
-     * Gets the RuntimeWorldHandles for the specified Dimension
-     * Remember that 1 = Overworld, 2 = Nether, and 3 = End
-     * @param dimension Corresponding number that matches the Dimension
-     * @return RuntimeWorldHandle for Dimension
-     */
-    @Nullable
-    public RuntimeWorldHandle getDimensionHandles(int dimension) {
-        if (this.worldHandles.size() > dimension && this.worldHandles.get(dimension) != null) {
-            return worldHandles.get(dimension);
-        } else {
-            return null;
-        }
-    }
-
-    /**
-     * Gets all RuntimeWorldHandles
-     * @return All RuntimeWorldHandles
-     */
-    public List<RuntimeWorldHandle> getAllDimensionHandles() {
-        return this.worldHandles;
-    }
-
-    /**
-     * Sets a Boolean GameRule for the PartitionWorld
-     * @param gameRule Boolean GameRule
-     * @param bool boolean
-     */
-    public void setGameRule(GameRules.Key<GameRules.BooleanRule> gameRule, boolean bool) {
-        for (RuntimeWorldHandle handle : worldHandles) {
-            handle.asWorld().getGameRules().get(gameRule).set(bool, server);
-        }
-    }
-
-    /**
-     * Sets an Integer GameRule for the PartitionWorld
-     * @param gameRule Integer GameRule
-     * @param integer int
-     */
-    public void setGameRule(GameRules.Key<GameRules.IntRule> gameRule, int integer) {
-        for (RuntimeWorldHandle handle : worldHandles) {
-            handle.asWorld().getGameRules().get(gameRule).set(integer, server);
-        }
+    private void tickWorlds() {
+        worlds.forEach((identifier1, runtimeWorldHandle) -> {
+            CMPAPI.WorldTickedEvent.WORLD_TICKED_EVENT.invoker().runWorldTickedEvent(runtimeWorldHandle.asWorld(), this);
+            runtimeWorldHandle.asWorld().tick(() -> true);
+        });
     }
 }
