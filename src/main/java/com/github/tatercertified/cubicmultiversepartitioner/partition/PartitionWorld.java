@@ -5,10 +5,12 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtString;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
 import net.minecraft.world.dimension.DimensionOptions;
+import net.minecraft.world.dimension.DimensionType;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
 import xyz.nucleoid.fantasy.RuntimeWorldConfig;
 import xyz.nucleoid.fantasy.RuntimeWorldHandle;
@@ -18,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * This is the main class for creating dimensions and storing information about those dimensions
@@ -37,10 +40,13 @@ public record PartitionWorld(Identifier identifier, long seed, int worldBorderSi
         if (tickSeparately()) {
             tickThread = Executors.newSingleThreadExecutor();
         }
-        setUpWorlds();
     }
 
-    private void setUpWorlds() {
+    public PartitionWorld(Identifier identifier, Identifier[] dimensions, boolean tickSeparately, MinecraftServer server) {
+        this(identifier, ThreadLocalRandom.current().nextLong(), 29999984, dimensions, tickSeparately, server);
+    }
+
+    public void setUpWorlds() {
         for (Identifier id : dimensions()) {
             DimensionOptions options = server.getRegistryManager().get(RegistryKeys.DIMENSION).get(id);
             ChunkGenerator generator;
@@ -51,10 +57,12 @@ public record PartitionWorld(Identifier identifier, long seed, int worldBorderSi
                 generator = new VoidChunkGenerator(server.getRegistryManager().get(RegistryKeys.BIOME));
             }
 
+            final RegistryEntry<DimensionType> dimensionType = options.dimensionTypeEntry();
+
             RuntimeWorldConfig config = new RuntimeWorldConfig()
                     .setSeed(this.seed)
                     .setShouldTickTime(true)
-                    .setDimensionType(options.dimensionTypeEntry())
+                    .setDimensionType(dimensionType)
                     .setGenerator(generator);
 
             RuntimeWorldHandle handle = PartitionManager.fantasy.getOrOpenPersistentWorld(identifier(), config);
@@ -66,6 +74,7 @@ public record PartitionWorld(Identifier identifier, long seed, int worldBorderSi
             handle.asWorld().getWorldBorder().setSize(worldBorderSize());
 
             ((ServerWorldPartitionInterface)handle.asWorld()).setParentIdentifier(identifier());
+            ((ServerWorldPartitionInterface)handle.asWorld()).setDimensionInheritance(dimensionType.getKey().get());
         }
     }
 
@@ -92,8 +101,7 @@ public record PartitionWorld(Identifier identifier, long seed, int worldBorderSi
      */
     public NbtCompound pack() {
         NbtCompound compound = new NbtCompound();
-        compound.putString("namespace", identifier().getNamespace());
-        compound.putString("path", identifier().getPath());
+        compound.putString("identifier", identifier().toString());
         compound.putLong("seed", seed());
         compound.putInt("worldBorderSize", worldBorderSize());
         compound.putBoolean("tickSeparately", tickSeparately());
@@ -105,10 +113,7 @@ public record PartitionWorld(Identifier identifier, long seed, int worldBorderSi
     private NbtList packWorlds() {
         NbtList worlds = new NbtList();
         for (Identifier id : dimensions()) {
-            NbtList worldIdentifier = new NbtList();
-            worldIdentifier.add(0, NbtString.of(id.getNamespace()));
-            worldIdentifier.add(1, NbtString.of(id.getPath()));
-            worlds.add(worldIdentifier);
+            worlds.add(NbtString.of(id.toString()));
         }
         return worlds;
     }
@@ -130,5 +135,29 @@ public record PartitionWorld(Identifier identifier, long seed, int worldBorderSi
             CMPAPI.WorldTickedEvent.WORLD_TICKED_EVENT.invoker().runWorldTickedEvent(runtimeWorldHandle.asWorld(), this);
             runtimeWorldHandle.asWorld().tick(() -> true);
         });
+    }
+
+    /**
+     * Gets the closest resemblance of an End Dimension
+     * @return ServerWorld of the End
+     */
+    public ServerWorld getEndLikeDimension() {
+        return worlds.get(new Identifier("the_end")).asWorld();
+    }
+
+    /**
+     * Gets the closest resemblance of an Overworld Dimension
+     * @return ServerWorld of the Overworld
+     */
+    public ServerWorld getOverworldLikeDimension() {
+        return worlds.get(new Identifier("overworld")).asWorld();
+    }
+
+    /**
+     * Gets the closest resemblance of a Nether Dimension
+     * @return ServerWorld of the Nether
+     */
+    public ServerWorld getNetherLikeDimension() {
+        return worlds.get(new Identifier("the_nether")).asWorld();
     }
 }

@@ -1,5 +1,6 @@
 package com.github.tatercertified.cubicmultiversepartitioner.partition;
 
+import com.github.tatercertified.cubicmultiversepartitioner.CMP;
 import com.github.tatercertified.cubicmultiversepartitioner.api.CMPAPI;
 import net.fabricmc.fabric.api.dimension.v1.FabricDimensions;
 import net.minecraft.entity.Entity;
@@ -40,6 +41,7 @@ public class PartitionManager {
         for (int i = 0; i < partitions.size(); i++) {
             NbtCompound data = partitions.getCompound(i);
             PartitionWorld world = unpack(data);
+            world.setUpWorlds();
             cmpWorlds.put(world.identifier(), world);
             CMPAPI.WorldLoadedEvent.WORLD_LOAD_EVENT.invoker().runWorldLoadEvent(world);
         }
@@ -50,21 +52,24 @@ public class PartitionManager {
      * @param identifier Identifier of the PartitionWorld
      */
     public void loadWorld(Identifier identifier) {
+        String string = identifier.toString();
+        CMP.LOGGER.info("Attempting to load: " + string);
         for (int i = 0; i < partitions.size(); i++) {
             NbtCompound data = partitions.getCompound(i);
-            if (data.getString("path").equals(identifier.getPath())) {
+            if (data.get("identifier").asString().equals(string)) {
                 PartitionWorld world = unpack(data);
+                world.setUpWorlds();
                 cmpWorlds.put(world.identifier(), world);
                 CMPAPI.WorldLoadedEvent.WORLD_LOAD_EVENT.invoker().runWorldLoadEvent(world);
-                break;
+                return;
             }
         }
+        CMP.LOGGER.info("Could not find: " + string);
     }
 
     private PartitionWorld unpack(NbtCompound compound) {
         return new PartitionWorld(
-                new Identifier(compound.getString("namespace"),
-                compound.getString("path")),
+                new Identifier(compound.getString("identifier")),
                 compound.getLong("seed"),
                 compound.getInt("worldBorderSize"),
                 unpackWorlds(compound),
@@ -77,7 +82,7 @@ public class PartitionManager {
         NbtList list = compound.getList("dimensions", NbtElement.LIST_TYPE);
         Identifier[] identifiers = new Identifier[list.size()];
         for (int i = 0; i < list.size(); i++) {
-            identifiers[i] = new Identifier(((NbtList)list.get(i)).getString(0), ((NbtList)list.get(i)).getString(1));
+            identifiers[i] = new Identifier(list.getString(i));
         }
         return identifiers;
     }
@@ -91,13 +96,9 @@ public class PartitionManager {
      * @param tickSeparately Whether to tick separate from the main 3 dimensions. This will cause desyncs if enabled!
      */
     public void createWorld(Identifier identifier, long seed, int worldBorderSize, Identifier[] dimensions, boolean tickSeparately) {
-        PartitionWorld world = null;
-        // TODO Figure out what is causing the "<local1> is null" error
-        try {
-            world  = new PartitionWorld(identifier, seed, worldBorderSize, dimensions, tickSeparately, this.server);
-        } catch (Throwable t) {
-            t.printStackTrace();
-        }
+        CMP.LOGGER.info("Creating world: " + identifier.toString());
+        PartitionWorld world = new PartitionWorld(identifier, seed, worldBorderSize, dimensions, tickSeparately, this.server);
+        world.setUpWorlds();
         cmpWorlds.put(identifier, world);
         CMPAPI.WorldCreatedEvent.WORLD_CREATED_EVENT.invoker().runWorldCreatedEvent(world);
     }
@@ -107,15 +108,19 @@ public class PartitionManager {
      * @param identifier Identifier for the PartitionWorld
      */
     public void removeWorld(Identifier identifier) {
+        CMP.LOGGER.info("Removing world: " + identifier.toString());
         PartitionWorld world = this.getWorld(identifier);
         world.discardDimensions();
-        cmpWorlds.remove(identifier);
+        if (cmpWorlds.remove(identifier) == null) {
+            CMP.LOGGER.info("World does not exist: " + identifier.toString());
+        }
     }
 
     /**
      * Saves all the PartitionWorlds to the CMPPersistentState
      */
     public void saveAll() {
+        CMP.LOGGER.info("Saving all worlds");
         NbtList partitions = new NbtList();
         for (PartitionWorld world : cmpWorlds.values()) {
             partitions.add(world.pack());
@@ -123,6 +128,7 @@ public class PartitionManager {
         CMPPersistentState state = CMPPersistentState.getServerState(server);
         state.partitions = partitions;
         state.markDirty();
+        CMP.LOGGER.info("Worlds have been saved");
     }
 
     /**
@@ -140,6 +146,37 @@ public class PartitionManager {
      */
     public int getWorldCount() {
         return cmpWorlds.size();
+    }
+
+    /**
+     * Gets how many PartitionWorlds are loaded and unloaded
+     * @return Integer of the amount of PartitionWorlds in "partitions" NbtList
+     */
+    public int getTotalWorldCount() {
+        return partitions.size();
+    }
+
+    /**
+     * Lists all the Identifiers for every PartitionWorld in "partitions"
+     * @return String Array of all the Identifiers as Strings
+     */
+    public String[] listPartitions() {
+        String[] strings = new String[partitions.size()];
+        for (int i = 0; i < partitions.size(); i++) {
+            strings[i] = ((NbtCompound)partitions.get(i)).getString("identifier");
+        }
+        return strings;
+    }
+
+    /**
+     * Lists all the active PartitionWorlds in "cmpWorlds"
+     * @return String Array of all the Identifiers as Strings
+     */
+    public String[] listActivePartitions() {
+        return cmpWorlds.keySet()
+                .stream()
+                .map(Identifier::toString)
+                .toArray(String[]::new);
     }
 
     /**
