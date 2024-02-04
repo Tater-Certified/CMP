@@ -91,13 +91,15 @@ public class PartitionManager {
      * @param tickSeparately Whether to tick separate from the main 3 dimensions. This will cause desyncs if enabled!
      */
     public void createWorld(Identifier identifier, long seed, int worldBorderSize, Identifier[] dimensions, boolean tickSeparately) {
-        System.out.println("TEST");
-        PartitionWorld world = new PartitionWorld(identifier, seed, worldBorderSize, dimensions, tickSeparately, this.server);
-        System.out.println("TEST");
+        PartitionWorld world = null;
+        // TODO Figure out what is causing the "<local1> is null" error
+        try {
+            world  = new PartitionWorld(identifier, seed, worldBorderSize, dimensions, tickSeparately, this.server);
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
         cmpWorlds.put(identifier, world);
-        System.out.println("TEST");
         CMPAPI.WorldCreatedEvent.WORLD_CREATED_EVENT.invoker().runWorldCreatedEvent(world);
-        System.out.println("TEST");
     }
 
     /**
