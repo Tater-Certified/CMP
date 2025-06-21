@@ -1,31 +1,25 @@
 {
   "schemaVersion": 1,
-  "id": "cubic-multiverse-partitioner",
+  "id": "cmp",
   "version": "${version}",
-  "name": "cubic-multiverse-partitioner",
-  "description": "The Minecraft Server Filing Cabinet",
-  "authors": [
-    "QPCrummer"
-  ],
-  "contact": {
-    "repo": "https://github.com/Tater-Certified/cubic-multiverse-partitioner"
-  },
-  "license": "LGPL-3.0",
-  "icon": "assets/cubic-multiverse-partitioner/icon.png",
+  "name": "CMP",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/cmp/icon.png",
   "environment": "*",
   "entrypoints": {
-    "client": [
-    ],
     "main": [
-      "com.github.tatercertified.cubicmultiversepartitioner.CMP"
+      "com.github.tatercertified.cmp.CMP"
     ]
   },
   "mixins": [
-    "cubic-multiverse-partitioner.mixins.json"
+    "cmp.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=${loader_version}",
+    "fabricloader": "*",
     "fabric": "*",
-    "minecraft": "${minecraft_version}"
+    "minecraft": ">=${min_version}"
   }
 }
