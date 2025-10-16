@@ -7,6 +7,22 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.ActionResult;
 
 public interface PartitionEvents {
+    interface PartitionDimensionRegisterEvent {
+        Event<PartitionDimensionRegisterEvent> PARTITION_DIMENSION_REGISTER_EVENT = EventFactory.createArrayBacked(PartitionDimensionRegisterEvent.class, (listeners) -> () -> {
+            for (PartitionDimensionRegisterEvent listener : listeners) {
+                ActionResult result = listener.runPartitionDimensionRegisterEvent();
+
+                if (result != ActionResult.PASS) {
+                    return result;
+                }
+            }
+            return ActionResult.PASS;
+        });
+
+        // TODO Change this to Partition object
+        ActionResult runPartitionDimensionRegisterEvent();
+    }
+
     interface PartitionCreatedEvent {
         Event<PartitionCreatedEvent> PARTITION_CREATED_EVENT = EventFactory.createArrayBacked(PartitionCreatedEvent.class, (listeners) -> (world) -> {
             for (PartitionCreatedEvent listener : listeners) {

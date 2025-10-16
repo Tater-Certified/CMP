@@ -1,22 +1,43 @@
 package com.github.tatercertified.cmp.backend;
 
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.WorldGenerationProgressListener;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.random.RandomSequencesState;
-import net.minecraft.world.World;
-import net.minecraft.world.dimension.DimensionOptions;
-import net.minecraft.world.level.ServerWorldProperties;
-import net.minecraft.world.level.storage.LevelStorage;
-import net.minecraft.world.spawner.SpecialSpawner;
-import org.jetbrains.annotations.Nullable;
+import com.github.tatercertified.cmp.CMP;
+import com.github.tatercertified.cmp.backend.data.PartitionWorldData;
+import com.github.tatercertified.cmp.backend.utils.TraderSpawnerAccessor;
+import com.github.tatercertified.cmp.backend.utils.WanderingTraderSpawner;
+import net.minecraft.util.Identifier;
+import xyz.nucleoid.fantasy.RuntimeWorldConfig;
 
-import java.util.List;
-import java.util.concurrent.Executor;
+import java.util.Map;
+import java.util.UUID;
 
-public class PartitionWorld extends ServerWorld {
-    public PartitionWorld(MinecraftServer server, Executor workerExecutor, LevelStorage.Session session, ServerWorldProperties properties, RegistryKey<World> worldKey, DimensionOptions dimensionOptions, WorldGenerationProgressListener worldGenerationProgressListener, boolean debugWorld, long seed, List<SpecialSpawner> spawners, boolean shouldTickTime, @Nullable RandomSequencesState randomSequencesState) {
-        super(server, workerExecutor, session, properties, worldKey, dimensionOptions, worldGenerationProgressListener, debugWorld, seed, spawners, shouldTickTime, randomSequencesState);
+public record PartitionWorld(Map<String, PartitionDimension> DIMENSIONS, UUID uuid, UUID owner, long seed) {
+    public WanderingTraderSpawner getWanderingTraderSpawner() {
+        PartitionDimension dimension = DIMENSIONS.get(DimensionConstants.OVERWORLD);
+        if (dimension != null) {
+            return ((TraderSpawnerAccessor)dimension.dimension().asWorld()).getTraderSpawner();
+        } else {
+            return null;
+        }
+    }
+
+    public void unloadDimension(String dimensionId) {
+        DIMENSIONS.get(dimensionId).dimension().unload();
+    }
+
+    public void loadDimension(String dimensionId) {
+        RuntimeWorldConfig worldConfig = CMPRegistry.get(dimensionId);
+        worldConfig.setSeed(this.seed);
+
+        this.DIMENSIONS.put(dimensionId, new PartitionDimension(CMP.FANTASY.getOrOpenPersistentWorld(Identifier.of(this.uuid + "_" + dimensionId), worldConfig)));
+    }
+
+    public void switchDimension(String oldDimension, String newDimension) {
+        unloadDimension(oldDimension);
+        loadDimension(newDimension);
+    }
+
+    public PartitionWorldData serialize() {
+        // TODO Save wandering trader data
+        return new PartitionWorldData(this.seed, this.uuid, this.owner, this.DIMENSIONS.keySet());
     }
 }
